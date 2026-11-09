@@ -1,0 +1,2 @@
+# 运行期零依赖：仅使用 Python 3.10+ 标准库（AES / HMAC / ECDSA 均为内置实现）。
+# 保留此文件是为了让 fork 后 pip install -r requirements.txt 也不会做多余的事。

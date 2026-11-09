@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.log
+result.json
+state/*.dec
+state/*.json
+state/*.tmp
+auths/
+trae-accounts*.json
+.DS_Store

@@ -1,0 +1,50 @@
+name: 自检
+
+on:
+  push:
+    # 只有代码 / workflow / 依赖变化才跑自检；文档和云端加密状态不触发，减少噪音
+    paths:
+      - '**.py'
+      - '.github/workflows/*.yml'
+      - 'requirements.txt'
+  # 公开仓库不接 pull_request：fork 的 PR 能在未审核的情况下执行 tests/ 里的代码
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 语法检查
+        run: python -m compileall -q checkin.py lib tools tests
+
+      - name: 离线单元测试
+        run: python -m unittest discover -s tests -v
+
+      - name: Workflow 基础校验
+        run: |
+          python - <<'PY'
+          import glob
+          for path in glob.glob('.github/workflows/*.yml'):
+              text = open(path, encoding='utf-8').read()
+              assert '\t' not in text, path + ': YAML 不允许 tab 缩进'
+              for key in ('name:', 'jobs:', 'runs-on:'):
+                  assert key in text, path + ': 缺少 ' + key
+              print('OK', path)
+          PY
+
+      - name: 凭证泄漏扫描
+        run: |
+          if grep -rInE 'github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{30,}|Cloud-IDE-JWT [A-Za-z0-9._-]{30,}' \
+            --include='*.py' --include='*.yml' --include='*.json' --exclude-dir=.git .; then
+            echo "::error::疑似硬编码凭证"
+            exit 1
+          fi
+          echo "未发现硬编码凭证"

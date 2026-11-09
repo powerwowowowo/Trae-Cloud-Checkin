@@ -1,0 +1,103 @@
+name: Trae 每日签到
+
+on:
+  schedule:
+    # GitHub Actions cron 用 UTC。北京 12:23，一天只触发一次。
+    # 容错放在程序内部：网络错误 / 429 / 5xx 自带 3 次退避重试，
+    # 9074 等设备限流刻意不重试（连发会延长惩罚窗口），次日自动重来。
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只查询签到状态，不领取积分、不写回状态'
+        type: boolean
+        default: false
+
+concurrency:
+  group: trae-cloud-checkin
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 校验 Secrets
+        env:
+          TRAE_ACCOUNTS: ${{ secrets.TRAE_ACCOUNTS }}
+          TRAE_ACCOUNTS_2: ${{ secrets.TRAE_ACCOUNTS_2 }}
+          TRAE_ACCOUNTS_3: ${{ secrets.TRAE_ACCOUNTS_3 }}
+          TRAE_ACCOUNTS_4: ${{ secrets.TRAE_ACCOUNTS_4 }}
+          TRAE_ACCOUNTS_5: ${{ secrets.TRAE_ACCOUNTS_5 }}
+          TRAE_ACCOUNTS_6: ${{ secrets.TRAE_ACCOUNTS_6 }}
+          TRAE_ACCOUNTS_7: ${{ secrets.TRAE_ACCOUNTS_7 }}
+          TRAE_ACCOUNTS_8: ${{ secrets.TRAE_ACCOUNTS_8 }}
+          TRAE_ACCOUNTS_9: ${{ secrets.TRAE_ACCOUNTS_9 }}
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+        run: |
+          # 每加一个账号就新建一个 TRAE_ACCOUNTS_N，不用改动已有 Secret
+          if [ -z "${TRAE_ACCOUNTS}${TRAE_ACCOUNTS_2}${TRAE_ACCOUNTS_3}${TRAE_ACCOUNTS_4}${TRAE_ACCOUNTS_5}${TRAE_ACCOUNTS_6}${TRAE_ACCOUNTS_7}${TRAE_ACCOUNTS_8}${TRAE_ACCOUNTS_9}" ]; then
+            echo "::error::缺少账号 Secret，请先用 tools/export_credentials.py 导出凭证"
+            exit 1
+          fi
+          if [ -z "$STATE_KEY" ]; then
+            echo "::error::缺少 Secret STATE_KEY，轮换后的 refreshToken 将无法持久化"
+            exit 1
+          fi
+          echo "Secrets 已就绪"
+
+      - name: 执行签到
+        env:
+          TRAE_ACCOUNTS: ${{ secrets.TRAE_ACCOUNTS }}
+          TRAE_ACCOUNTS_2: ${{ secrets.TRAE_ACCOUNTS_2 }}
+          TRAE_ACCOUNTS_3: ${{ secrets.TRAE_ACCOUNTS_3 }}
+          TRAE_ACCOUNTS_4: ${{ secrets.TRAE_ACCOUNTS_4 }}
+          TRAE_ACCOUNTS_5: ${{ secrets.TRAE_ACCOUNTS_5 }}
+          TRAE_ACCOUNTS_6: ${{ secrets.TRAE_ACCOUNTS_6 }}
+          TRAE_ACCOUNTS_7: ${{ secrets.TRAE_ACCOUNTS_7 }}
+          TRAE_ACCOUNTS_8: ${{ secrets.TRAE_ACCOUNTS_8 }}
+          TRAE_ACCOUNTS_9: ${{ secrets.TRAE_ACCOUNTS_9 }}
+          STATE_KEY: ${{ secrets.STATE_KEY }}
+          NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python checkin.py --dry-run --no-save
+          else
+            python checkin.py
+          fi
+
+      - name: 写回加密的 token 状态
+        if: ${{ always() && inputs.dry_run != true }}
+        run: |
+          if git status --porcelain -- state/credentials.enc | grep -q .; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state/credentials.enc
+            git commit -m "chore(state): 更新加密的 token 轮换状态 [skip ci]"
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          else
+            echo "状态无变化，跳过提交"
+          fi
+
+      - name: 保存运行报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkin-result-${{ github.run_id }}
+          path: result.json
+          if-no-files-found: ignore
+          retention-days: 14

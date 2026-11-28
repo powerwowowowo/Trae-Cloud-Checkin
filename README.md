@@ -128,6 +128,32 @@ Trae 每次续期都会**轮换 refreshToken**，静态 Secret 越刷越失效�
 所以 `STATE_KEY` 不能中途更换。真换了，状态文件解不开，脚本会回退到 Secret 的初始凭证并给出告警，
 此时重新跑一次 `tools/export_credentials.py` 更新对应编号的账号 Secret 即可。
 
+### 本机客户端会把云端的 refreshToken 顶掉（必看）
+
+Trae 的 refreshToken 是轮换制，**同一账号同时只有一份有效**：本机客户端一刷新，云端手里那份立刻作废，
+表现是 `code=1001 unable to authenticate`。2026-11-23 就栽在这里——本机凌晨刷新了一次，
+云端从当天起连续 6 天 1001，天天发失败邮件，而且此时手动更新 Secret 也没用（会被旧状态文件盖回去）。
+
+现在的处理：
+
+1. 更新 Secret 时带上 `rev` 字段，程序看到 rev 变化就以 Secret 为准，不再被 `state/credentials.enc` 里的旧轮换结果覆盖；
+2. 用 `tools/push_secret.js` 一键推送，它会自动加 rev，并且**只在本机登录态真的变了时才推**
+   （避免把云端自己轮换出来的新 token 顶掉）：
+
+   ```bat
+   npm i --prefix tools libsodium-wrappers
+   set GITHUB_TOKEN=github_pat_xxx
+   node tools\push_secret.js --secret auto
+   ```
+
+   `--secret auto` 会读 `%USERPROFILE%\.workbuddy\trae-checkin\map.json`，按 userId 尾号映射到对应编号的 Secret，
+   形如 `{"7795":"TRAE_ACCOUNTS_2","4346":"TRAE_ACCOUNTS"}`；
+3. Windows 可以把 `tools/sync-secret.ps1` 挂到启动项 / 计划任务，PAT 放
+   `%USERPROFILE%\.workbuddy\trae-checkin\pat.txt`（用 `icacls` 限制成当前用户可读），日志在 `%LOCALAPPDATA%\TraeCheckin\sync.log`。
+
+另外，单个账号失败不再让整个 workflow 失败（只有**全部账号**都失败才失败），
+所以不会再天天收到 GitHub 失败邮件；真实结果看运行页的 Step Summary 和 `result.json`。
+
 ## 错误码
 
 | code / 情况 | 含义 | 脚本行为 |

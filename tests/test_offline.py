@@ -266,6 +266,33 @@ class TestStateMerge(unittest.TestCase):
             finally:
                 state.STATE_FILE = original
 
+    def test_new_rev_overrides_cached_token(self):
+        """Secret 带新 rev（人工重新导出）时必须压过状态文件里的旧轮换结果。
+
+        否则本机客户端一刷新 refreshToken，云端旧值作废，而状态文件又把旧值顶回来，
+        就会每天 1001 失败，且手工更新 Secret 也不生效。
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            original = state.STATE_FILE
+            state.STATE_FILE = Path(tmp) / "credentials.enc"
+            try:
+                with patch.dict(os.environ, {"STATE_KEY": "unit-test-key"}):
+                    state.save_accounts([{
+                        "name": "a", "userId": "1", "deviceId": "1234567890123",
+                        "accessToken": "BROKEN-AT", "refreshToken": "BROKEN-RT",
+                        "expiresAt": 9999999999, "rev": "r1",
+                    }])
+                    secret = json.dumps([{
+                        "name": "a", "userId": "1", "deviceId": "1234567890123",
+                        "accessToken": "FRESH-AT", "refreshToken": "FRESH-RT", "rev": "r2",
+                    }])
+                    accounts, note = state.load_accounts(secret)
+                    self.assertEqual(accounts[0]["accessToken"], "FRESH-AT")
+                    self.assertEqual(accounts[0]["refreshToken"], "FRESH-RT")
+                    self.assertIn("新 rev", note)
+            finally:
+                state.STATE_FILE = original
+
     def test_missing_secret(self):
         with self.assertRaises(state.ConfigError):
             state.load_accounts("")

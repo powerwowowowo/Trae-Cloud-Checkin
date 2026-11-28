@@ -10,4 +10,6 @@ state/*.json
 state/*.tmp
 auths/
 trae-accounts*.json
+node_modules/
+package-lock.json
 .DS_Store

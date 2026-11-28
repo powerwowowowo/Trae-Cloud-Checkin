@@ -78,6 +78,10 @@ def normalize(raw: dict) -> dict:
                                      "publicKeyPEM", "publicKeyPem"),
         "deviceName": _first(raw, "deviceName", "DeviceName") or "PC",
         "deviceModel": _first(raw, "deviceModel", "DeviceModel"),
+        # 手动更新 Secret 时带上 rev（tools/push_secret.py 自动生成）。
+        # rev 变了说明是人刚重新导出过登录态，必须以 Secret 为准；
+        # 否则沿用状态文件里上一轮轮换出来的 token，避免静态 Secret 把新登录态顶掉。
+        "rev": _first(raw, "rev", "revision", "_rev"),
         "fingerprint": {
             "brand": _first(fp, "brand", "Brand") or "",
             "type": _first(fp, "type", "Type") or "Windows",
@@ -197,14 +201,23 @@ def load_accounts(secret_value: str | None = None) -> tuple[list[dict], str]:
             if isinstance(items, list):
                 index = {_identity(normalize(x)): normalize(x) for x in items if isinstance(x, dict)}
                 merged = 0
+                kept = 0
                 for acc in accounts:
                     old = index.get(_identity(acc))
                     if not old:
+                        continue
+                    new_rev = str(acc.get("rev") or "")
+                    old_rev = str(old.get("rev") or "")
+                    if new_rev and new_rev != old_rev:
+                        # Secret 带了新的 rev：用户刚重新导出过，Secret 优先，丢弃旧状态
+                        kept += 1
                         continue
                     for field in TOKEN_FIELDS:
                         if old.get(field) and old.get(field) != acc.get(field):
                             acc[field] = old[field]
                             merged += 1
+                if kept:
+                    note += " + %d 个账号按新 rev 采用 Secret 最新登录态" % kept
                 note += " + 加密状态文件（%d 个字段沿用上次轮换结果）" % merged
         except crypto.CryptoError as exc:
             note += "；状态文件不可用（%s），已回退 Secret" % exc

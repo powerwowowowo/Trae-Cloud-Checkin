@@ -103,6 +103,11 @@ def run_account(account: dict, dry_run: bool = False, verify: bool = True) -> di
                       message="查询状态失败 HTTP %s：%s" % (status.get("_http"),
                                                         str(status.get("message") or status.get("raw") or "")[:160]))
         return _finish(result)
+    if code == 1001:
+        result.update(state="TOKEN_EXPIRED", code=code,
+                      message="服务端拒绝鉴权（1001）：该账号 refreshToken 已被本机 Trae 客户端轮换作废，"
+                              "重新导出本机登录态并更新对应 TRAE_ACCOUNTS_N 即可恢复")
+        return _finish(result)
     if code != 0:
         result.update(state="FAILED", code=code,
                       message="查询状态返回 code=%s %s" % (code, status.get("message") or ""))
@@ -173,6 +178,8 @@ def write_outputs(results: list[dict], started: float, note: str) -> dict:
         "counts": counts,
         "results": results,
         "success": all(r["state"] in OK_STATES for r in results),
+        # 只有「一个账号都没签到成功」才算致命失败，避免单号 token 失效就天天发失败邮件
+        "all_failed": bool(results) and not any(r["state"] in OK_STATES for r in results),
     }
     RESULT_FILE.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -288,8 +295,12 @@ def main() -> int:
 
     summary = write_outputs(results, started, note)
     log("汇总：" + " / ".join("%s %d" % (LABELS[k], v) for k, v in summary["counts"].items() if v))
+    if summary["all_failed"]:
+        log("全部账号都失败，按失败退出（GitHub 会发一次失败通知，需要人工看一下）")
+    elif not summary["success"]:
+        log("部分账号失败，本轮仍按成功退出：不再天天刷失败邮件，详情看运行摘要")
     notify(summary)
-    return 0 if summary["success"] else 1
+    return 1 if summary["all_failed"] else 0
 
 
 if __name__ == "__main__":
